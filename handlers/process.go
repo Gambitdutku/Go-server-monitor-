@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +27,13 @@ func KillProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = os.Process.Kill(os.Process{Pid: pid})
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		http.Error(w, "Process bulunamadı", http.StatusNotFound)
+		return
+	}
+
+	err = process.Kill()
 	if err != nil {
 		http.Error(w, "Process sonlandırılamadı", http.StatusInternalServerError)
 		return
