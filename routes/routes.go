@@ -11,7 +11,7 @@ func SetupRoutes() *mux.Router {
 	r.HandleFunc("/processes", handlers.ListProcesses).Methods("GET")
 	r.HandleFunc("/processes", handlers.KillProcess).Methods("DELETE")
 	r.HandleFunc("/files", handlers.ListFiles).Methods("GET")
-	r.HandleFunc("/ssh", handlers.RunSSHCommand).Methods("POST")
+	r.HandleFunc("/terminal", handlers.StartTerminal).Methods("GET")
 	return r
 }
 
