@@ -6,13 +6,27 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// Secure path function to prevent directory traversal attacks
+func securePath(basePath, requestedPath string) (string, error) {
+	cleanPath := filepath.Clean("/" + requestedPath)
+	fullPath := filepath.Join(basePath, cleanPath)
+	if !strings.HasPrefix(fullPath, basePath) {
+		return "", os.ErrPermission
+	}
+	return fullPath, nil
+}
 
 // List files and directories
 func ListFiles(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*") // Enable CORS
+	w.Header().Set("Content-Type", "application/json")
+
 	dir := r.URL.Query().Get("dir")
 	if dir == "" {
-		dir = "/" // Default to the current directory
+		dir = "." // Default to the current directory
 	}
 
 	files, err := os.ReadDir(dir)
@@ -29,12 +43,13 @@ func ListFiles(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fileList)
 }
 
 // Read file content
 func ReadFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	filePath := r.URL.Query().Get("file")
 	if filePath == "" {
 		http.Error(w, "File path not provided", http.StatusBadRequest)
@@ -53,6 +68,8 @@ func ReadFile(w http.ResponseWriter, r *http.Request) {
 
 // Download a file
 func DownloadFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	filePath := r.URL.Query().Get("file")
 	if filePath == "" {
 		http.Error(w, "File path not provided", http.StatusBadRequest)
@@ -73,6 +90,8 @@ func DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 // Edit & save a file
 func WriteFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	var data struct {
 		FilePath string `json:"file"`
 		Content  string `json:"content"`
@@ -95,6 +114,8 @@ func WriteFile(w http.ResponseWriter, r *http.Request) {
 
 // Delete a file
 func DeleteFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	filePath := r.URL.Query().Get("file")
 	if filePath == "" {
 		http.Error(w, "File path not provided", http.StatusBadRequest)

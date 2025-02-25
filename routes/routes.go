@@ -7,6 +7,7 @@ import (
 
 func SetupRoutes() *mux.Router {
 	r := mux.NewRouter()
+	r.Use(handlers.EnableCORS)
 	r.HandleFunc("/system", handlers.GetSystemInfo).Methods("GET")
 	r.HandleFunc("/processes", handlers.ListProcesses).Methods("GET")
 	r.HandleFunc("/processes", handlers.KillProcess).Methods("DELETE")
