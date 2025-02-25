@@ -3,11 +3,12 @@ package handlers
 import (
 	"bufio"
 	"log"
+	"net/http"
 	"os/exec"
+	"regexp"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
-	"net/http"
 )
 
 var upgrader = websocket.Upgrader{
@@ -16,34 +17,41 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// Function to clear out ascii errors
+func cleanOutput(input string) string {
+	re := regexp.MustCompile(`\x1B\[[0-9;]*[a-zA-Z]|\x1B\]0;.*?\x07|\x1B\(?[B0]`)
+	return re.ReplaceAllString(input, "")
+}
+
 func StartTerminal(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("WebSocket bağlantı hatası:", err)
+		log.Println("WebSocket connection error:", err)
 		return
 	}
 	defer conn.Close()
 
-	// Terminal başlat (Linux için "bash", Windows için "cmd")
+	// Start terminal(bash for linux)
 	cmd := exec.Command("bash")
 
-	// ✅ PTY oluştur (Gerçek terminal simülasyonu sağlar!)
+	// create PTY (real time terminal simulator)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		log.Println("PTY başlatılamadı:", err)
+		log.Println(" Could Not start PTY:", err)
 		return
 	}
 	defer ptmx.Close()
 
-	// ✅ Terminal çıktısını WebSocket üzerinden tarayıcıya gönder
+	// Send terminal outputs trough websocket
 	go func() {
 		scanner := bufio.NewScanner(ptmx)
 		for scanner.Scan() {
-			conn.WriteMessage(websocket.TextMessage, scanner.Bytes())
+			cleaned := cleanOutput(scanner.Text()) // ANSI kodlarını temizle
+			conn.WriteMessage(websocket.TextMessage, []byte(cleaned+"\n"))
 		}
 	}()
 
-	// ✅ Kullanıcının girdiklerini terminale yaz
+	// Write down user inputs
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {

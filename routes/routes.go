@@ -14,4 +14,5 @@ func SetupRoutes() *mux.Router {
 	r.HandleFunc("/terminal", handlers.StartTerminal).Methods("GET")
 	return r
 }
+//I recommend you to change nothing but Urls
 
