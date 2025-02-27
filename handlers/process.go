@@ -78,3 +78,73 @@ func KillProcess(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Process sonlandırıldı"))
 }
 
+
+func StopProcess(w http.ResponseWriter, r *http.Request) {
+	pidStr := r.URL.Query().Get("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "Geçersiz PID", http.StatusBadRequest)
+		return
+	}
+	err = exec.Command("kill", "-STOP", strconv.Itoa(pid)).Run()
+	if err != nil {
+		http.Error(w, "Process durdurulamadı", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("Process durduruldu"))
+}
+
+func ContinueProcess(w http.ResponseWriter, r *http.Request) {
+	pidStr := r.URL.Query().Get("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "Geçersiz PID", http.StatusBadRequest)
+		return
+	}
+	err = exec.Command("kill", "-CONT", strconv.Itoa(pid)).Run()
+	if err != nil {
+		http.Error(w, "Process devam ettirilemedi", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("Process devam ettirildi"))
+}
+
+func RestartProcess(w http.ResponseWriter, r *http.Request) {
+	pidStr := r.URL.Query().Get("pid")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "Geçersiz PID", http.StatusBadRequest)
+		return
+	}
+	err = exec.Command("kill", "-HUP", strconv.Itoa(pid)).Run()
+	if err != nil {
+		http.Error(w, "Process yeniden başlatılamadı", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("Process yeniden başlatıldı"))
+}
+
+func ChangePriority(w http.ResponseWriter, r *http.Request) {
+	pidStr := r.URL.Query().Get("pid")
+	priorityStr := r.URL.Query().Get("priority")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		http.Error(w, "Geçersiz PID", http.StatusBadRequest)
+		return
+	}
+	priority, err := strconv.Atoi(priorityStr)
+	if err != nil {
+		http.Error(w, "Geçersiz öncelik", http.StatusBadRequest)
+		return
+	}
+	err = exec.Command("renice", strconv.Itoa(priority), "-p", strconv.Itoa(pid)).Run()
+	if err != nil {
+		http.Error(w, "Öncelik değiştirilemedi", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("Process önceliği değiştirildi"))
+}
