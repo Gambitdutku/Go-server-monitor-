@@ -5,18 +5,54 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"fmt"
+	"strings"
+	"encoding/json"
 )
 
+
+type Process struct {
+	PID     string `json:"pid"`
+	User    string `json:"user"`
+	Command string `json:"command"`
+	Mem     string `json:"mem_percent"`
+	CPU     string `json:"cpu_percent"`
+	Priority string `json:"priority"`
+	VSZ     string `json:"vsz"`
+}
+
 func ListProcesses(w http.ResponseWriter, r *http.Request) {
-	cmd := exec.Command("ps", "-e", "-o", "pid,cmd")
+	cmd := exec.Command("ps", "-eo", "pid,user,comm,%mem,%cpu,pri,vsz")
 	out, err := cmd.Output()
 	if err != nil {
-		http.Error(w, "Process listesi alınamadı", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Process listesi alınamadı: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write(out)
+	lines := strings.Split(string(out), "\n")
+	var processes []Process
+
+	for i, line := range lines {
+		if i == 0 || line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 {
+			continue
+		}
+		processes = append(processes, Process{
+			PID:      fields[0],
+			User:     fields[1],
+			Command:  fields[2],
+			Mem:      fields[3],
+			CPU:      fields[4],
+			Priority: fields[5],
+			VSZ:      fields[6],
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(processes)
 }
 
 func KillProcess(w http.ResponseWriter, r *http.Request) {
