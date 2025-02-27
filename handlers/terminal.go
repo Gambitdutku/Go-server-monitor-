@@ -11,11 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
 
 // Function to clear out ascii errors
 func cleanOutput(input string) string {

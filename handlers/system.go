@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type CPUInfo struct {
@@ -22,9 +24,6 @@ type RAMInfo struct {
 	Swap  string `json:"swap"`
 }
 
-
-
-
 type OSInfo struct {
 	OS           string `json:"os"`
 	Distribution string `json:"distribution"`
@@ -32,127 +31,184 @@ type OSInfo struct {
 }
 
 type SystemInfo struct {
-	CPU     CPUInfo     `json:"cpu"`
-	RAM     RAMInfo     `json:"ram"`
-	Disk    DiskInfo    `json:"disk"`
-	OS      OSInfo      `json:"os"`
+	CPU CPUInfo `json:"cpu"`
+	RAM RAMInfo `json:"ram"`
+	OS  OSInfo  `json:"os"`
 }
 
 func GetSystemInfo(w http.ResponseWriter, r *http.Request) {
+	var wg sync.WaitGroup
+	info := SystemInfo{}
+
 	// CPU Bilgileri
-	cpuName, _ := runCommand("lscpu | grep 'Model name' | awk -F: '{print $2}'")
-	cpuCores, _ := runCommand("nproc")
-	cpuUsage, _ := runCommand("mpstat -P ALL 1 1 | awk 'NR>3 && $2 ~ /[0-9]/ {print $NF}'")
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		info.CPU.Name = getCPUName()
+	}()
+	go func() {
+		defer wg.Done()
+		info.CPU.Cores = getCPUCores()
+	}()
+	go func() {
+		defer wg.Done()
+		info.CPU.UsagePerCore, info.CPU.AvgUsage = getCPUUsage()
+	}()
 
+	// RAM Bilgileri
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		info.RAM = getRAMInfo()
+	}()
+
+	// OS Bilgileri
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		info.OS = getOSInfo()
+	}()
+
+	wg.Wait()
+
+	// JSON Encode
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(info)
+}
+
+// **Komutları Kaldırıp Daha Hızlı Okuma Sağlayan Fonksiyonlar**
+
+func getCPUName() string {
+	data, err := ioutil.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		log.Println("Error reading /proc/cpuinfo:", err)
+		return "Unknown"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "model name") {
+			return strings.TrimSpace(strings.Split(line, ":")[1])
+		}
+	}
+	return "Unknown"
+}
+
+func getCPUCores() int {
+	data, err := ioutil.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		log.Println("Error reading /proc/cpuinfo:", err)
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "processor") {
+			count++
+		}
+	}
+	return count
+}
+
+func getCPUUsage() ([]string, string) {
+	data, err := ioutil.ReadFile("/proc/stat")
+	if err != nil {
+		log.Println("Error reading /proc/stat:", err)
+		return []string{}, "0%"
+	}
+	lines := strings.Split(string(data), "\n")
 	var usagePerCore []string
-	var avgUsage float64
-	cpuUsageLines := strings.Split(strings.TrimSpace(cpuUsage), "\n")
+	var totalUsage float64
+	var coreCount int
 
-	for _, usage := range cpuUsageLines {
-		trimmed := strings.TrimSpace(usage)
-		if trimmed != "" {
-			usageValue := 100 - parseFloat(trimmed)
-			usagePerCore = append(usagePerCore, formatFloat(usageValue)+"%")
-			avgUsage += usageValue
+	for _, line := range lines {
+		if strings.HasPrefix(line, "cpu") && line != "cpu  " { // cpu toplamı değil, core'lar lazım
+			fields := strings.Fields(line)
+			if len(fields) < 8 {
+				continue
+			}
+			idle, _ := strconv.Atoi(fields[4])
+			total := 0
+			for _, v := range fields[1:] {
+				n, _ := strconv.Atoi(v)
+				total += n
+			}
+			usage := 100 - (float64(idle) / float64(total) * 100)
+			usagePerCore = append(usagePerCore, fmt.Sprintf("%.2f%%", usage))
+			totalUsage += usage
+			coreCount++
 		}
 	}
 
-	if len(usagePerCore) > 0 {
-		avgUsage /= float64(len(usagePerCore))
+	if coreCount > 0 {
+		return usagePerCore, fmt.Sprintf("%.2f%%", totalUsage/float64(coreCount))
 	}
+	return usagePerCore, "0%"
+}
 
-	// RAM Bilgileri
-	ramUsage, _ := runCommand("free -m | awk 'NR==2 {print ($2 - $7) \"MB/\" $2 \"MB\"}'")
-	ramParts := strings.Split(strings.TrimSpace(ramUsage), "/")
-	if len(ramParts) < 2 {
-		ramParts = []string{"0MB", "0MB"}
-	}
-	ramUsedGB := formatMBtoGB(ramParts[0])
-	ramTotalGB := formatMBtoGB(ramParts[1])
-
-	// Swap Bilgileri
-	swapUsage, _ := runCommand("free -m | awk 'NR==3 {print $3 \"MB/\" $2 \"MB\"}'")
-	swapParts := strings.Split(strings.TrimSpace(swapUsage), "/")
-	if len(swapParts) < 2 {
-		swapParts = []string{"0MB", "0MB"}
-	}
-	swapUsedGB := formatMBtoGB(swapParts[0])
-	swapTotalGB := formatMBtoGB(swapParts[1])
-
-	// İşletim Sistemi Bilgileri
-	osType, _ := runCommand("uname -s") // OS türü (Linux/Windows)
-	distribution, _ := runCommand("lsb_release -a | grep 'Distributor ID' | awk '{print $3}'") // Dağıtım ismi
-	kernelVersion, _ := runCommand("uname -r") // Kernel versiyonu
-
-	// SystemInfo struct'a OS bilgilerini ekle
-	info := SystemInfo{
-		CPU: CPUInfo{
-			Name:         strings.TrimSpace(cpuName),
-			Cores:        parseInt(cpuCores),
-			UsagePerCore: usagePerCore,
-			AvgUsage:     formatFloat(avgUsage) + "%",
-		},
-		RAM: RAMInfo{
-			Used:  ramUsedGB,
-			Total: ramTotalGB,
-			Swap:  swapUsedGB + "/" + swapTotalGB,
-		},
-		OS: OSInfo{
-			OS:           strings.TrimSpace(osType),
-			Distribution: strings.TrimSpace(distribution),
-			Kernel:       strings.TrimSpace(kernelVersion),
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(info)
+func getRAMInfo() RAMInfo {
+	data, err := ioutil.ReadFile("/proc/meminfo")
 	if err != nil {
-		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		log.Println("Error reading /proc/meminfo:", err)
+		return RAMInfo{}
+	}
+	lines := strings.Split(string(data), "\n")
+	var total, available, swapTotal, swapFree int
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[0] {
+		case "MemTotal:":
+			total, _ = strconv.Atoi(fields[1])
+		case "MemAvailable:":
+			available, _ = strconv.Atoi(fields[1])
+		case "SwapTotal:":
+			swapTotal, _ = strconv.Atoi(fields[1])
+		case "SwapFree:":
+			swapFree, _ = strconv.Atoi(fields[1])
+		}
+	}
+
+	used := total - available
+	swapUsed := swapTotal - swapFree
+
+	return RAMInfo{
+		Used:  fmt.Sprintf("%.2fGB", float64(used)/1000/1000),
+		Total: fmt.Sprintf("%.2fGB", float64(total)/1000/1000),
+		Swap:  fmt.Sprintf("%.2fGB/%.2fGB", float64(swapUsed)/1000/1000, float64(swapTotal)/1000/1000),
 	}
 }
 
-// Komut çalıştırma fonksiyonu
-func runCommand(cmd string) (string, error) {
-	out, err := exec.Command("sh", "-c", cmd).Output()
+func getOSInfo() OSInfo {
+	kernel, err := ioutil.ReadFile("/proc/version")
 	if err != nil {
-		log.Printf("Error executing command: %s, Error: %v", cmd, err)
-		return "", err
+		log.Println("Error reading /proc/version:", err)
+		kernel = []byte("Unknown")
 	}
-	return strings.TrimSpace(string(out)), nil
+
+	distribution := getDistribution()
+
+	return OSInfo{
+		OS:           "Linux",
+		Distribution: distribution,
+		Kernel:       strings.TrimSpace(string(kernel)),
+	}
 }
 
-// Float dönüşümü
-func parseFloat(s string) float64 {
-	val, err := strconv.ParseFloat(s, 64)
+func getDistribution() string {
+	data, err := ioutil.ReadFile("/etc/os-release")
 	if err != nil {
-		log.Printf("Error parsing float: %s, Error: %v", s, err)
-		return 0
+		log.Println("Error reading /etc/os-release:", err)
+		return "Unknown"
 	}
-	return val
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "PRETTY_NAME=") {
+			return strings.Trim(strings.Split(line, "=")[1], `"`)
+		}
+	}
+	return "Unknown"
 }
 
-// Integer dönüşümü
-func parseInt(s string) int {
-	val, err := strconv.Atoi(s)
-	if err != nil {
-		log.Printf("Error parsing int: %s, Error: %v", s, err)
-		return 0
-	}
-	return val
-}
-
-// Float formatlama
-func formatFloat(f float64) string {
-	return strconv.FormatFloat(f, 'f', 2, 64)
-}
-
-// MB'yi GB'ye çevirme (1000MB = 1GB)
-func formatMBtoGB(s string) string {
-	val, err := strconv.Atoi(strings.TrimSuffix(s, "MB"))
-	if err != nil {
-		log.Printf("Error parsing MB to GB: %s, Error: %v", s, err)
-		return "0GB"
-	}
-	return strconv.Itoa(val/1000) + "GB"
-}
-//

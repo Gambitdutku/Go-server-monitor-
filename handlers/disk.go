@@ -1,11 +1,13 @@
 package handlers
 
 import (
-	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
+// DiskInfo yapısı, her diskin bilgilerini tutar
 type DiskInfo struct {
 	Name       string `json:"name"`
 	Total      string `json:"total"`
@@ -16,36 +18,69 @@ type DiskInfo struct {
 	WriteSpeed string `json:"write_speed"`
 }
 
+
+// Disk bilgilerini alacak fonksiyon
 func GetDiskInfo(w http.ResponseWriter, r *http.Request) {
-	// Disk Bilgileri
-	diskUsage, _ := runCommand("df -h --output=source,size,used,avail,pcent | grep '^/'")
-	diskParts := strings.Fields(diskUsage)
-	if len(diskParts) < 5 {
-		diskParts = []string{"", "", "", "", ""}
-	}
-
-	// Disk I/O Bilgileri (2 tur çalıştır, 2. sonucu al)
-	diskIO, _ := runCommand("iostat -d 1 2 | awk 'NR>6 {print $1 \" \" $3 \"KB/s \" $4 \"KB/s\"}' | tail -n 1")
-	diskIOParts := strings.Fields(diskIO)
-	if len(diskIOParts) < 3 {
-		diskIOParts = []string{"", "", ""} 
-	}
-
-	// Disk Bilgilerini struct'a ekle
-	info := DiskInfo{
-		Name:       diskParts[0],
-		Total:      diskParts[1],
-		Used:       diskParts[2],
-		Available:  diskParts[3],
-		Usage:      diskParts[4],
-		ReadSpeed:  diskIOParts[1],
-		WriteSpeed: diskIOParts[2],
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(info)
+	// WebSocket bağlantısını yükselt
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		log.Println("Error upgrading to WebSocket:", err)
+		return
+	}
+	defer conn.Close()
+
+	for {
+		// Disk Bilgileri
+		diskUsage, _ := runCommand("df -h --output=source,size,used,avail,pcent")
+		diskParts := strings.Split(diskUsage, "\n")
+		var diskInfoList []DiskInfo
+
+		// Diskler hakkında bilgileri her satır için al
+		for _, part := range diskParts {
+			diskDetails := strings.Fields(part)
+			if len(diskDetails) < 5 {
+				continue
+			}
+
+			// iostat verilerini al ve işleyelim
+			diskIO, _ := runCommand("iostat -d 1 2 | awk 'NR>6 {print $1 \" \" $3 \"KB/s \" $4 \"KB/s\"}'")
+			diskIOParts := strings.Split(diskIO, "\n")
+
+			// iostat çıktısını her disk için işleyelim
+			for _, ioPart := range diskIOParts {
+				ioFields := strings.Fields(ioPart)
+				if len(ioFields) < 3 {
+					continue
+				}
+
+				// Okuma ve Yazma hızlarını al
+				readSpeed := ioFields[1]  // Okuma hızı
+				writeSpeed := ioFields[2] // Yazma hızı
+
+				// Disk bilgilerini oluştur ve listeye ekle
+				info := DiskInfo{
+					Name:       diskDetails[0],
+					Total:      diskDetails[1],
+					Used:       diskDetails[2],
+					Available:  diskDetails[3],
+					Usage:      diskDetails[4],
+					ReadSpeed:  readSpeed,
+					WriteSpeed: writeSpeed,
+				}
+				diskInfoList = append(diskInfoList, info)
+			}
+		}
+
+		// WebSocket üzerinden disk bilgilerini gönder
+		err := conn.WriteJSON(diskInfoList)
+		if err != nil {
+			log.Println("Error sending data to WebSocket:", err)
+			break
+		}
+
+		// 1 saniye bekle ve tekrar veri gönder
+		time.Sleep(1 * time.Second)
 	}
 }
+
 

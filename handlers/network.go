@@ -1,9 +1,10 @@
 package handlers
 
 import (
-	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type NetworkInterface struct {
@@ -18,27 +19,72 @@ type NetworkInfo struct {
 	Interfaces []NetworkInterface `json:"interfaces"`
 }
 
-func GetNetworkInfo(w http.ResponseWriter, r *http.Request) {
-	// Ağ Arayüzleri Bilgileri
-	interfacesOutput, _ := runCommand("ifconfig -a | grep 'flags' | awk -F: '{print $1}'")
+
+func GetNetworkInfoWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("WebSocket upgrade failed:", err)
+		return
+	}
+	defer conn.Close()
+
+	for {
+		networkInfo, err := fetchNetworkInfo()
+		if err != nil {
+			log.Println("Failed to fetch network info:", err)
+			return
+		}
+
+		if err := conn.WriteJSON(networkInfo); err != nil {
+			log.Println("Failed to send network info:", err)
+			return
+		}
+
+		time.Sleep(1 * time.Second) // Send updates every  second
+	}
+}
+
+func fetchNetworkInfo() (NetworkInfo, error) {
+	// Fetch the list of interfaces using the ifconfig command
+	interfacesOutput, err := runCommand("ifconfig -a | grep 'flags' | awk -F: '{print $1}'")
+	if err != nil {
+		return NetworkInfo{}, err
+	}
 	interfaceNames := strings.Split(strings.TrimSpace(interfacesOutput), "\n")
 
-	var networkInterfaces []NetworkInterface // Eksik değişken tanımlandı
+	var networkInterfaces []NetworkInterface
 
+	// Loop over each interface and fetch the relevant information
 	for _, iface := range interfaceNames {
 		if strings.TrimSpace(iface) == "" {
 			continue
 		}
 
-		downloadSpeed, _ := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $1}'")
-		uploadSpeed, _ := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $2}'")
+		// Fetch download and upload speeds using ifstat
+		downloadSpeed, err := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $1}'")
+		if err != nil {
+			return NetworkInfo{}, err
+		}
+		uploadSpeed, err := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $2}'")
+		if err != nil {
+			return NetworkInfo{}, err
+		}
 
+		// Fetch the IP and MAC address of the interface
+		ipAddr, err := runCommand("ifconfig " + iface + " | grep 'inet ' | awk '{print $2}'")
+		if err != nil {
+			return NetworkInfo{}, err
+		}
+		macAddr, err := runCommand("ifconfig " + iface + " | grep 'ether' | awk '{print $2}'")
+		if err != nil {
+			return NetworkInfo{}, err
+		}
+
+		// Format the download and upload speeds
 		downloadSpeed = strings.TrimSpace(downloadSpeed) + " KB/s"
 		uploadSpeed = strings.TrimSpace(uploadSpeed) + " KB/s"
 
-		ipAddr, _ := runCommand("ifconfig " + iface + " | grep 'inet ' | awk '{print $2}'")
-		macAddr, _ := runCommand("ifconfig " + iface + " | grep 'ether' | awk '{print $2}'")
-
+		// Append the interface details to the result slice
 		networkInterfaces = append(networkInterfaces, NetworkInterface{
 			Name:          iface,
 			DownloadSpeed: strings.TrimSpace(downloadSpeed),
@@ -48,14 +94,6 @@ func GetNetworkInfo(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	networkInfo := NetworkInfo{
-		Interfaces: networkInterfaces,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(networkInfo)
-	if err != nil {
-		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
-	}
+	return NetworkInfo{Interfaces: networkInterfaces}, nil
 }
 
