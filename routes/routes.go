@@ -17,6 +17,8 @@ func SetupRoutes() *mux.Router {
 	r.HandleFunc("/download-file", handlers.DownloadFile).Methods("GET")
 	r.HandleFunc("/write-file", handlers.WriteFile).Methods("POST")
 	r.HandleFunc("/delete-file", handlers.DeleteFile).Methods("DELETE")
+	r.HandleFunc("/network", handlers.GetNetworkInfo).Methods("GET")
+	r.HandleFunc("/disk", handlers.GetDiskInfo).Methods("GET")
 	return r
 }
 //I recommend you to change nothing but Urls
