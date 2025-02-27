@@ -32,9 +32,17 @@ type DiskInfo struct {
 	WriteSpeed string `json:"write_speed"`
 }
 
-type NetworkInfo struct {
+
+type NetworkInterface struct {
+	Name          string `json:"name"`
 	DownloadSpeed string `json:"download_speed"`
 	UploadSpeed   string `json:"upload_speed"`
+	IP            string `json:"ip"`
+	MAC           string `json:"mac"`
+}
+
+type NetworkInfo struct {
+	Interfaces []NetworkInterface `json:"interfaces"`
 }
 
 type OSInfo struct {
@@ -107,12 +115,37 @@ func GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ağ Trafiği (2 tur çalıştır, 2. sonucu al)
-	networkUsage, _ := runCommand("ifstat 1 2 | awk 'NR==4 {print $1 \" KB/s \" $2 \" KB/s\"}'") //çalışmıyor bakılacak
-	networkParts := strings.Fields(networkUsage)
-	if len(networkParts) < 2 {
-		networkParts = []string{"0 KB/s", "0 KB/s"}
+	// Ağ Arayüzleri Bilgileri
+	interfacesOutput, _ := runCommand("ifconfig -a | grep 'flags' | awk -F: '{print $1}'")
+	interfaceNames := strings.Split(strings.TrimSpace(interfacesOutput), "\n")
+
+	var networkInterfaces []NetworkInterface
+	for _, iface := range interfaceNames {
+		if strings.TrimSpace(iface) == "" {
+			continue
+		}
+
+		downloadSpeed, _ := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $1}'")
+		uploadSpeed, _ := runCommand("ifstat -i " + iface + " 1 1 | awk 'NR==3 {print $2}'")
+
+		downloadSpeed = strings.TrimSpace(downloadSpeed) + " KB/s"
+		uploadSpeed = strings.TrimSpace(uploadSpeed) + " KB/s"
+
+		ipAddr, _ := runCommand("ifconfig " + iface + " | grep 'inet ' | awk '{print $2}'")
+		macAddr, _ := runCommand("ifconfig " + iface + " | grep 'ether' | awk '{print $2}'")
+
+		networkInterfaces = append(networkInterfaces, NetworkInterface{
+			Name:          iface,
+			DownloadSpeed: strings.TrimSpace(downloadSpeed),
+			UploadSpeed:   strings.TrimSpace(uploadSpeed),
+			IP:            strings.TrimSpace(ipAddr),
+			MAC:           strings.TrimSpace(macAddr),
+		})
 	}
 
+	networkInfo := NetworkInfo{
+		Interfaces: networkInterfaces,
+	}
 	// İşletim Sistemi Bilgileri
 	osType, _ := runCommand("uname -s") // OS türü (Linux/Windows)
 	distribution, _ := runCommand("lsb_release -a | grep 'Distributor ID' | awk '{print $3}'") // Dağıtım ismi
@@ -140,10 +173,7 @@ func GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 			ReadSpeed:  diskIOParts[1],
 			WriteSpeed: diskIOParts[2],
 		},
-		Network: NetworkInfo{
-			DownloadSpeed: networkParts[0],
-			UploadSpeed:   networkParts[1],
-		},
+		Network: networkInfo,
 		OS: OSInfo{
 			OS:           strings.TrimSpace(osType),
 			Distribution: strings.TrimSpace(distribution),
