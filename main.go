@@ -2,14 +2,30 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
-	"go_server_monitor/routes"
+
 	"go_server_monitor/config"
+	"go_server_monitor/database"
+	"go_server_monitor/routes"
 )
 
 func main() {
+	// 
+	cfg := config.LoadConfig()
+
+	// Connect DB
+	if err := database.ConnectDB(cfg); err != nil {
+		log.Fatalf("Could not connect DB: %v", err)
+	}
+
+	// Set up routes
 	r := routes.SetupRoutes()
-	fmt.Println("Sunucu " + config.ServerPort + " portunda çalışıyor...")
-	http.ListenAndServe(":"+config.ServerPort, r)
+
+	// Start Server
+	fmt.Println("Server runs at port " + cfg.ServerPort)
+	if err := http.ListenAndServe(":"+cfg.ServerPort, r); err != nil {
+		log.Fatalf("Could Not start server: %v", err)
+	}
 }
 
